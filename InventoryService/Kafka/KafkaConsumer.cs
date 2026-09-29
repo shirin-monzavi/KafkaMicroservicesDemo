@@ -1,14 +1,18 @@
 ﻿using Confluent.Kafka;
+using InventoryService.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace InventoryService.Kafka;
 
 public class KafkaConsumer : BackgroundService
 {
     private readonly IConsumer<string, string> _consumer;
-    private readonly HashSet<string> _processedMessages = new();
+    private readonly IServiceScopeFactory _scopeFactory;
 
-    public KafkaConsumer()
+    public KafkaConsumer(IServiceScopeFactory scopeFactory)
     {
+        _scopeFactory = scopeFactory;
+
         var config = new ConsumerConfig
         {
             BootstrapServers = "localhost:9092",
@@ -23,7 +27,7 @@ public class KafkaConsumer : BackgroundService
         _consumer.Subscribe("order-created");
     }
 
-    protected override Task ExecuteAsync(
+    protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -32,9 +36,18 @@ public class KafkaConsumer : BackgroundService
             {
                 var result = _consumer.Consume(stoppingToken);
 
+                using var scope = _scopeFactory.CreateScope();
+
+                var db = scope.ServiceProvider
+                    .GetRequiredService<InventoryDbContext>();
+
                 var messageId = result.Message.Key;
 
-                if (_processedMessages.Contains(messageId))
+                var alreadyProcessed =
+                                     await db.ProcessedMessages
+                                         .AnyAsync(x => x.MessageId == messageId, stoppingToken);
+
+                if (alreadyProcessed)
                 {
                     Console.WriteLine(
                         $"Duplicate message ignored: {messageId}");
@@ -50,7 +63,14 @@ public class KafkaConsumer : BackgroundService
                 // Business Logic
                 Console.WriteLine("Order processed successfully.");
 
-                _processedMessages.Add(messageId);
+                db.ProcessedMessages.Add(
+                    new ProcessedMessage
+                    {
+                        MessageId = messageId,
+                        ProcessedAt = DateTime.UtcNow
+                    });
+
+                await db.SaveChangesAsync(stoppingToken);
 
                 _consumer.Commit(result);
             }
@@ -62,6 +82,5 @@ public class KafkaConsumer : BackgroundService
 
         _consumer.Close();
 
-        return Task.CompletedTask;
     }
 }
