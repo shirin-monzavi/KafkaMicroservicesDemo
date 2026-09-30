@@ -15,14 +15,14 @@ public class OrdersController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create(string message)
+    public async Task<IActionResult> Create()
     {
         var orderId = Guid.NewGuid().ToString();
 
         await _producer.PublishAsync(
             "order-created",
             orderId,
-            message);
+            $"Order {orderId} created");
 
         return Ok(new
         {

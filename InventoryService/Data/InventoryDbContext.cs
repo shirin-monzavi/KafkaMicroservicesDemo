@@ -2,7 +2,7 @@
 
 namespace InventoryService.Data;
 
-public class InventoryDbContext: DbContext
+public class InventoryDbContext : DbContext
 {
     public InventoryDbContext(
     DbContextOptions<InventoryDbContext> options)
@@ -10,8 +10,9 @@ public class InventoryDbContext: DbContext
     {
     }
 
-    public DbSet<ProcessedMessage> ProcessedMessages =>
-        Set<ProcessedMessage>();
+    public DbSet<ProcessedMessage> ProcessedMessages => Set<ProcessedMessage>();
+
+    public DbSet<Product> Products => Set<Product>();
 
     protected override void OnModelCreating(
         ModelBuilder modelBuilder)

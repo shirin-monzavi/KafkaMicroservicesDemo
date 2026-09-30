@@ -71,6 +71,7 @@ public class KafkaConsumer : BackgroundService
                     });
 
                 await db.SaveChangesAsync(stoppingToken);
+                throw new Exception("Crash after database save");
 
                 _consumer.Commit(result);
             }
