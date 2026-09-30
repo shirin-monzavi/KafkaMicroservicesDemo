@@ -40,11 +40,10 @@ public class KafkaConsumer : BackgroundService
 
                 var orderCreatedEvent = JsonSerializer.Deserialize<OrderCreatedEvent>(result.Message.Value);
 
-                Console.WriteLine(
-                                $"Order received: " +
-                                $"OrderId={orderCreatedEvent!.OrderId}, " +
-                                $"ProductId={orderCreatedEvent.ProductId}, " +
-                                $"Quantity={orderCreatedEvent.Quantity}");
+                if (orderCreatedEvent is null)
+                {
+                    throw new Exception("Invalid ordercreated event");
+                }
 
                 using var scope = _scopeFactory.CreateScope();
 
@@ -64,11 +63,17 @@ public class KafkaConsumer : BackgroundService
                     continue;
                 }
 
-                Console.WriteLine(
-                    $"Processing order: {result.Message.Value}");
+                await using var transaction = await db.Database.BeginTransactionAsync(stoppingToken);
 
-                // Business Logic
-                Console.WriteLine("Order processed successfully.");
+                var rowsAffected = await db.Products.Where(x => x.Id == orderCreatedEvent.ProductId &&
+                                                          x.Stock >= orderCreatedEvent.Quantity)
+                                              .ExecuteUpdateAsync(s => s.SetProperty(x => x.Stock, x => x.Stock - orderCreatedEvent.Quantity),
+                                              cancellationToken: stoppingToken);
+                if (rowsAffected == 0)
+                {
+                    throw new Exception(
+                        "Product not found or not enough stock.");
+                }
 
                 db.ProcessedMessages.Add(
                     new ProcessedMessage
@@ -79,6 +84,10 @@ public class KafkaConsumer : BackgroundService
 
                 await db.SaveChangesAsync(stoppingToken);
 
+                await transaction.CommitAsync(stoppingToken);
+
+                throw new Exception("Crash before Kafka commit");
+
                 _consumer.Commit(result);
             }
             catch (OperationCanceledException)
@@ -88,6 +97,5 @@ public class KafkaConsumer : BackgroundService
         }
 
         _consumer.Close();
-
     }
 }

@@ -26,19 +26,21 @@ public class OrdersController : ControllerBase
             MessageId = Guid.NewGuid(),
             OrderId = orderId,
             ProductId = 1,
+            Quantity = 2
         };
 
         var message = JsonSerializer.Serialize(orderCreated);
+        var messageId = orderCreated.MessageId.ToString();
 
         await _producer.PublishAsync(
             "order-created",
-            orderCreated.MessageId.ToString(),
+            messageId,
             message
          );
 
         return Ok(new
         {
-            OrderId = orderId
+            MessageId = messageId
         });
     }
 }
