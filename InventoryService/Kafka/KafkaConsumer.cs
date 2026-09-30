@@ -1,6 +1,8 @@
 ﻿using Confluent.Kafka;
 using InventoryService.Data;
+using InventoryService.Events;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace InventoryService.Kafka;
 
@@ -36,16 +38,21 @@ public class KafkaConsumer : BackgroundService
             {
                 var result = _consumer.Consume(stoppingToken);
 
+                var orderCreatedEvent = JsonSerializer.Deserialize<OrderCreatedEvent>(result.Message.Value);
+
+                Console.WriteLine(
+                                $"Order received: " +
+                                $"OrderId={orderCreatedEvent!.OrderId}, " +
+                                $"ProductId={orderCreatedEvent.ProductId}, " +
+                                $"Quantity={orderCreatedEvent.Quantity}");
+
                 using var scope = _scopeFactory.CreateScope();
 
-                var db = scope.ServiceProvider
-                    .GetRequiredService<InventoryDbContext>();
+                var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
 
                 var messageId = result.Message.Key;
 
-                var alreadyProcessed =
-                                     await db.ProcessedMessages
-                                         .AnyAsync(x => x.MessageId == messageId, stoppingToken);
+                var alreadyProcessed = await db.ProcessedMessages.AnyAsync(x => x.MessageId == messageId, stoppingToken);
 
                 if (alreadyProcessed)
                 {
@@ -71,7 +78,6 @@ public class KafkaConsumer : BackgroundService
                     });
 
                 await db.SaveChangesAsync(stoppingToken);
-                throw new Exception("Crash after database save");
 
                 _consumer.Commit(result);
             }
