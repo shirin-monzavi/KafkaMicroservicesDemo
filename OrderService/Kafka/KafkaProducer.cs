@@ -31,6 +31,6 @@ public class KafkaProducer
             });
 
         Console.WriteLine(
-            $"Message delivered to {result.TopicPartitionOffset}");
+            $"Message delivered to Order: {result.Partition} {result.TopicPartitionOffset}");
     }
 }

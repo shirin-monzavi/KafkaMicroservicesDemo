@@ -3,6 +3,7 @@ using InventoryService.Data;
 using InventoryService.Events;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using static Confluent.Kafka.ConfigPropertyNames;
 
 namespace InventoryService.Kafka;
 
@@ -10,10 +11,12 @@ public class KafkaConsumer : BackgroundService
 {
     private readonly IConsumer<string, string> _consumer;
     private readonly IServiceScopeFactory _scopeFactory;
-
-    public KafkaConsumer(IServiceScopeFactory scopeFactory)
+    private readonly KafkaProducer _producer;
+    public KafkaConsumer(IServiceScopeFactory scopeFactory, KafkaProducer producer)
     {
         _scopeFactory = scopeFactory;
+
+        _producer = producer;
 
         var config = new ConsumerConfig
         {
@@ -49,7 +52,7 @@ public class KafkaConsumer : BackgroundService
 
                 var db = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
 
-                var messageId = result.Message.Key;
+                var messageId = orderCreatedEvent.MessageId.ToString();
 
                 var alreadyProcessed = await db.ProcessedMessages.AnyAsync(x => x.MessageId == messageId, stoppingToken);
 
@@ -65,14 +68,42 @@ public class KafkaConsumer : BackgroundService
 
                 await using var transaction = await db.Database.BeginTransactionAsync(stoppingToken);
 
+                Console.WriteLine(
+                                    $"Processing MessageId={messageId}, " +
+                                    $"ProductId={orderCreatedEvent.ProductId}, " +
+                                    $"Quantity={orderCreatedEvent.Quantity}");
+
                 var rowsAffected = await db.Products.Where(x => x.Id == orderCreatedEvent.ProductId &&
                                                           x.Stock >= orderCreatedEvent.Quantity)
                                               .ExecuteUpdateAsync(s => s.SetProperty(x => x.Stock, x => x.Stock - orderCreatedEvent.Quantity),
                                               cancellationToken: stoppingToken);
+
+                Console.WriteLine(
+                                    $"RowsAffected={rowsAffected}");
+
                 if (rowsAffected == 0)
                 {
-                    throw new Exception(
-                        "Product not found or not enough stock.");
+                    Console.WriteLine(
+     $"Insufficient stock. ProductId={orderCreatedEvent.ProductId}");
+
+                    var failedEvent = new StockReservationFailedEvent
+                    {
+                        MessageId = Guid.NewGuid(),
+                        OrderId = orderCreatedEvent.OrderId,
+                        ProductId = orderCreatedEvent.ProductId,
+                        Quantity = orderCreatedEvent.Quantity,
+                        Reason = "InsufficientStock"
+                    };
+
+                    var message = JsonSerializer.Serialize(failedEvent);
+
+                    await _producer.PublishAsync(
+    "stock-reservation-failed",
+    failedEvent.OrderId.ToString(),
+    message);
+                    _consumer.Commit(result);
+
+                    continue;
                 }
 
                 db.ProcessedMessages.Add(
@@ -85,8 +116,6 @@ public class KafkaConsumer : BackgroundService
                 await db.SaveChangesAsync(stoppingToken);
 
                 await transaction.CommitAsync(stoppingToken);
-
-                throw new Exception("Crash before Kafka commit");
 
                 _consumer.Commit(result);
             }

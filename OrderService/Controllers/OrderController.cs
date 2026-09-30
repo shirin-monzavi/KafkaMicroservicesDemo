@@ -26,7 +26,7 @@ public class OrdersController : ControllerBase
             MessageId = Guid.NewGuid(),
             OrderId = orderId,
             ProductId = 1,
-            Quantity = 2
+            Quantity = 8
         };
 
         var message = JsonSerializer.Serialize(orderCreated);
@@ -34,13 +34,43 @@ public class OrdersController : ControllerBase
 
         await _producer.PublishAsync(
             "order-created",
-            messageId,
+            orderId.ToString(),
             message
          );
 
         return Ok(new
         {
+            OrderId = orderId,
             MessageId = messageId
         });
+    }
+
+    [HttpPost("concurrent-test")]
+    public async Task<IActionResult> ConcurrentTest()
+    {
+        var tasks = Enumerable.Range(1, 2)
+            .Select(async _ =>
+            {
+                var orderId = Guid.NewGuid();
+
+                var orderCreatedEvent = new OrderCreatedEvent
+                {
+                    MessageId = Guid.NewGuid(),
+                    OrderId = orderId,
+                    ProductId = 1,
+                    Quantity = 8
+                };
+
+                var message = JsonSerializer.Serialize(orderCreatedEvent);
+
+                await _producer.PublishAsync(
+                    "order-created",
+                    orderCreatedEvent.MessageId.ToString(),
+                    message);
+            });
+
+        await Task.WhenAll(tasks);
+
+        return Ok("Two orders sent.");
     }
 }

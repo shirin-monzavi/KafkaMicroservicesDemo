@@ -10,6 +10,7 @@ builder.Services.AddSwaggerGen();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 builder.Services.AddSingleton<KafkaProducer>();
+builder.Services.AddHostedService<KafkaConsumer>();
 
 var app = builder.Build();
 app.UseSwagger();

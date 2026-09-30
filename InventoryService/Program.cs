@@ -14,6 +14,7 @@ builder.Services.AddDbContext<InventoryDbContext>(
         options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddHostedService<KafkaConsumer>();
+builder.Services.AddSingleton<KafkaProducer>();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
