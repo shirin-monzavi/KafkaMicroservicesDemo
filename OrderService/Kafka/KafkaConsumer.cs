@@ -46,8 +46,24 @@ public class KafkaConsumer : BackgroundService
 
                 using var scope = _scopeFactory.CreateScope();
 
+                var messageId = failedEvent.MessageId.ToString();
+
                 var db = scope.ServiceProvider
                     .GetRequiredService<OrderDbContext>();
+                var alreadyProcessed = await db.ProcessedMessages
+                                                            .AnyAsync(
+                                                                x => x.MessageId == messageId,
+                                                                stoppingToken);
+
+                if (alreadyProcessed)
+                {
+                    Console.WriteLine(
+                        $"Duplicate message ignored: {messageId}");
+
+                    _consumer.Commit(result);
+
+                    continue;
+                }
 
                 var order = await db.Orders
                     .FirstOrDefaultAsync(x => x.Id == failedEvent.OrderId);
@@ -62,6 +78,12 @@ public class KafkaConsumer : BackgroundService
 
                 order.Status = OrderStatus.Cancelled;
 
+                db.ProcessedMessages.Add(
+                                        new ProcessedMessage
+                                        {
+                                            MessageId = messageId,
+                                            ProcessedAt = DateTime.UtcNow
+                                        });
                 await db.SaveChangesAsync();
 
                 Console.WriteLine(

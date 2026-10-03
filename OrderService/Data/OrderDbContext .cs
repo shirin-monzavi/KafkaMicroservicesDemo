@@ -11,6 +11,7 @@ public class OrderDbContext : DbContext
     }
 
     public DbSet<Order> Orders => Set<Order>();
+    public DbSet<ProcessedMessage> ProcessedMessages => Set<ProcessedMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -21,5 +22,9 @@ public class OrderDbContext : DbContext
             entity.Property(x => x.Status)
                 .HasConversion<int>();
         });
+
+        modelBuilder.Entity<ProcessedMessage>()
+    .HasIndex(x => x.MessageId)
+    .IsUnique();
     }
 }
