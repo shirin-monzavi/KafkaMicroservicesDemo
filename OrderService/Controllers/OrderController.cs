@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using OrderService.Data;
 using OrderService.Events;
 using OrderService.Kafka;
 using System.Text.Json;
@@ -10,23 +11,39 @@ namespace OrderService.Controllers;
 public class OrdersController : ControllerBase
 {
     private readonly KafkaProducer _producer;
+    private readonly OrderDbContext _db;
 
-    public OrdersController(KafkaProducer producer)
+    public OrdersController(
+        KafkaProducer producer,
+        OrderDbContext db
+        )
     {
         _producer = producer;
+        _db = db;
     }
 
     [HttpPost]
     public async Task<IActionResult> Create()
     {
-        var orderId = Guid.NewGuid();
+        var order = new Order
+        {
+            Id = Guid.NewGuid(),
+            ProductId = 1,
+            Quantity = 8,
+            Status = OrderStatus.Created,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        _db.Orders.Add(order);
+
+        await _db.SaveChangesAsync();
 
         var orderCreated = new OrderCreatedEvent()
         {
             MessageId = Guid.NewGuid(),
-            OrderId = orderId,
-            ProductId = 1,
-            Quantity = 8
+            OrderId = order.Id,
+            ProductId = order.ProductId,
+            Quantity = order.Quantity
         };
 
         var message = JsonSerializer.Serialize(orderCreated);
@@ -34,13 +51,13 @@ public class OrdersController : ControllerBase
 
         await _producer.PublishAsync(
             "order-created",
-            orderId.ToString(),
+            order.Id.ToString(),
             message
          );
 
         return Ok(new
         {
-            OrderId = orderId,
+            OrderId = order.Id,
             MessageId = messageId
         });
     }

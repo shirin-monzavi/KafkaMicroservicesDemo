@@ -1,13 +1,18 @@
 ﻿using Confluent.Kafka;
+using Microsoft.EntityFrameworkCore;
+using OrderService.Data;
+using System.Text.Json;
 
 namespace OrderService.Kafka;
 
 public class KafkaConsumer : BackgroundService
 {
     private readonly IConsumer<string, string> _consumer;
+    private readonly IServiceScopeFactory _scopeFactory;
 
-    public KafkaConsumer()
+    public KafkaConsumer(IServiceScopeFactory scopeFactory)
     {
+        _scopeFactory = scopeFactory;
         var config = new ConsumerConfig
         {
             BootstrapServers = "localhost:9092",
@@ -30,8 +35,37 @@ public class KafkaConsumer : BackgroundService
             {
                 var result = _consumer.Consume(stoppingToken);
 
+                var failedEvent =
+     JsonSerializer.Deserialize<StockReservationFailedEvent>(
+         result.Message.Value);
+
+                if (failedEvent is null)
+                {
+                    continue;
+                }
+
+                using var scope = _scopeFactory.CreateScope();
+
+                var db = scope.ServiceProvider
+                    .GetRequiredService<OrderDbContext>();
+
+                var order = await db.Orders
+                    .FirstOrDefaultAsync(x => x.Id == failedEvent.OrderId);
+
+                if (order is null)
+                {
+                    Console.WriteLine(
+                        $"Order not found: {failedEvent.OrderId}");
+
+                    continue;
+                }
+
+                order.Status = OrderStatus.Cancelled;
+
+                await db.SaveChangesAsync();
+
                 Console.WriteLine(
-                    $"Received StockReservationFailed: {result.Message.Value}");
+                    $"Order {order.Id} cancelled. Reason: {failedEvent.Reason}");
 
                 _consumer.Commit(result);
             }
