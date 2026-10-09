@@ -81,6 +81,12 @@ public class KafkaConsumer : BackgroundService
                 Console.WriteLine(
                                     $"RowsAffected={rowsAffected}");
 
+                db.ProcessedMessages.Add(new ProcessedMessage
+                {
+                    MessageId = messageId,
+                    ProcessedAt = DateTime.UtcNow
+                });
+
                 if (rowsAffected == 0)
                 {
                     Console.WriteLine(
@@ -95,24 +101,26 @@ public class KafkaConsumer : BackgroundService
                         Reason = "InsufficientStock"
                     };
 
-                    var message = JsonSerializer.Serialize(failedEvent);
+                    var reservationFailedOutboxMessage = new OutboxMessage
+                    {
+                        MessageId = failedEvent.MessageId.ToString(),
+                        EventType = nameof(StockReservationFailedEvent),
+                        Topic = "stock-reservation-failed",
+                        Key = failedEvent.OrderId.ToString(),
+                        Payload = JsonSerializer.Serialize(failedEvent),
+                        CreatedAt = DateTime.UtcNow
+                    };
 
-                    await _producer.PublishAsync(
-                                                "stock-reservation-failed",
-                                                failedEvent.OrderId.ToString(),
-                                                message);
+                    db.OutboxMessages.Add(reservationFailedOutboxMessage);
+
+                    await db.SaveChangesAsync(stoppingToken);
+
+                    await transaction.CommitAsync(stoppingToken);
+
                     _consumer.Commit(result);
 
                     continue;
                 }
-
-
-                db.ProcessedMessages.Add(
-                    new ProcessedMessage
-                    {
-                        MessageId = messageId,
-                        ProcessedAt = DateTime.UtcNow
-                    });
 
                 var stockReservedEvent = new StockReservedEvent
                 {
@@ -122,7 +130,7 @@ public class KafkaConsumer : BackgroundService
                     Quantity = orderCreatedEvent.Quantity
                 };
 
-                var outboxMessage = new OutboxMessage
+                var stockReservedOutboxMessage = new OutboxMessage
                 {
                     MessageId = stockReservedEvent.MessageId.ToString(),
                     EventType = nameof(StockReservedEvent),
@@ -132,7 +140,7 @@ public class KafkaConsumer : BackgroundService
                     CreatedAt = DateTime.UtcNow
                 };
 
-                db.OutboxMessages.Add(outboxMessage);
+                db.OutboxMessages.Add(stockReservedOutboxMessage);
 
                 await db.SaveChangesAsync(stoppingToken);
 
