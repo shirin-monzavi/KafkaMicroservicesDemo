@@ -84,7 +84,7 @@ public class KafkaConsumer : BackgroundService
                 if (rowsAffected == 0)
                 {
                     Console.WriteLine(
-     $"Insufficient stock. ProductId={orderCreatedEvent.ProductId}");
+                                     $"Insufficient stock. ProductId={orderCreatedEvent.ProductId}");
 
                     var failedEvent = new StockReservationFailedEvent
                     {
@@ -98,13 +98,14 @@ public class KafkaConsumer : BackgroundService
                     var message = JsonSerializer.Serialize(failedEvent);
 
                     await _producer.PublishAsync(
-    "stock-reservation-failed",
-    failedEvent.OrderId.ToString(),
-    message);
+                                                "stock-reservation-failed",
+                                                failedEvent.OrderId.ToString(),
+                                                message);
                     _consumer.Commit(result);
 
                     continue;
                 }
+
 
                 db.ProcessedMessages.Add(
                     new ProcessedMessage
@@ -112,6 +113,26 @@ public class KafkaConsumer : BackgroundService
                         MessageId = messageId,
                         ProcessedAt = DateTime.UtcNow
                     });
+
+                var stockReservedEvent = new StockReservedEvent
+                {
+                    MessageId = Guid.NewGuid(),
+                    OrderId = orderCreatedEvent.OrderId,
+                    ProductId = orderCreatedEvent.ProductId,
+                    Quantity = orderCreatedEvent.Quantity
+                };
+
+                var outboxMessage = new OutboxMessage
+                {
+                    MessageId = stockReservedEvent.MessageId.ToString(),
+                    EventType = nameof(StockReservedEvent),
+                    Topic = "stock-reserved",
+                    Key = orderCreatedEvent.OrderId.ToString(),
+                    Payload = JsonSerializer.Serialize(stockReservedEvent),
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                db.OutboxMessages.Add(outboxMessage);
 
                 await db.SaveChangesAsync(stoppingToken);
 
