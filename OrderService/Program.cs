@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using OrderService;
 using OrderService.Data;
 using OrderService.Kafka;
 
@@ -16,7 +17,7 @@ builder.Services.AddHostedService<KafkaConsumer>();
 builder.Services.AddDbContext<OrderDbContext>(options =>
     options.UseSqlServer(
         builder.Configuration.GetConnectionString("DefaultConnection")));
-
+builder.Services.AddHostedService<StockReservedConsumer>();
 var app = builder.Build();
 app.UseSwagger();
 app.UseSwaggerUI();
