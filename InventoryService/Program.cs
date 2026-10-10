@@ -1,3 +1,4 @@
+using InventoryService;
 using InventoryService.Data;
 using InventoryService.Kafka;
 using Microsoft.EntityFrameworkCore;
@@ -14,6 +15,7 @@ builder.Services.AddDbContext<InventoryDbContext>(
         options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddHostedService<KafkaConsumer>();
+builder.Services.AddHostedService<OutboxBackgroundService>();
 builder.Services.AddSingleton<KafkaProducer>();
 var app = builder.Build();
 
