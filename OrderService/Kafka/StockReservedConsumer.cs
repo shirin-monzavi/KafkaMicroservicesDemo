@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿
+using System.Text.Json;
 using Confluent.Kafka;
 using Microsoft.EntityFrameworkCore;
 using OrderService.Data;
@@ -61,6 +62,11 @@ public class StockReservedConsumer : BackgroundService
                     var messageId =
                         stockReservedEvent.MessageId.ToString();
 
+                    await using var transaction =
+                        await db.Database.BeginTransactionAsync(
+                            stoppingToken);
+
+                    // 1. Check idempotency inside the transaction.
                     var alreadyProcessed =
                         await db.ProcessedMessages.AnyAsync(
                             x => x.MessageId == messageId,
@@ -68,6 +74,8 @@ public class StockReservedConsumer : BackgroundService
 
                     if (alreadyProcessed)
                     {
+                        await transaction.CommitAsync(stoppingToken);
+
                         _logger.LogInformation(
                             "Duplicate StockReservedEvent ignored: {MessageId}",
                             messageId);
@@ -76,37 +84,63 @@ public class StockReservedConsumer : BackgroundService
                         continue;
                     }
 
-                    await using var transaction =
-                        await db.Database.BeginTransactionAsync(
-                            stoppingToken);
-
-                    var order = await db.Orders.FirstOrDefaultAsync(
+                    // 2. Check whether the order exists.
+                    var orderExists = await db.Orders.AnyAsync(
                         x => x.Id == stockReservedEvent.OrderId,
                         stoppingToken);
 
-                    if (order is null)
+                    if (!orderExists)
                     {
                         _logger.LogWarning(
                             "Order {OrderId} was not found.",
                             stockReservedEvent.OrderId);
 
-                        // Do not commit the offset here.
-                        // We will handle this case in our retry/error design.
+                        // Do not save ProcessedMessage or commit the offset.
+                        // Retry/DLQ handling will be designed separately.
                         continue;
                     }
 
-                    if (order.Status == OrderStatus.Created)
+                    // 3. Atomically transition Created -> Confirmed.
+                    var rowsAffected = await db.Orders
+                        .Where(x =>
+                            x.Id == stockReservedEvent.OrderId &&
+                            x.Status == OrderStatus.Created)
+                        .ExecuteUpdateAsync(
+                            setters => setters.SetProperty(
+                                x => x.Status,
+                                OrderStatus.Confirmed),
+                            stoppingToken);
+
+                    if (rowsAffected == 1)
                     {
-                        order.Status = OrderStatus.Confirmed;
+                        _logger.LogInformation(
+                            "Order {OrderId} transitioned to Confirmed.",
+                            stockReservedEvent.OrderId);
                     }
                     else
                     {
+                        var currentStatus = await db.Orders
+                            .Where(x => x.Id == stockReservedEvent.OrderId)
+                            .Select(x => (OrderStatus?)x.Status)
+                            .FirstOrDefaultAsync(stoppingToken);
+
+                        if (currentStatus is null)
+                        {
+                            _logger.LogWarning(
+                                "Order {OrderId} no longer exists.",
+                                stockReservedEvent.OrderId);
+
+                            // Do not mark this event as processed.
+                            continue;
+                        }
+
                         _logger.LogWarning(
                             "Order {OrderId} cannot transition from {Status} to Confirmed.",
-                            order.Id,
-                            order.Status);
+                            stockReservedEvent.OrderId,
+                            currentStatus);
                     }
 
+                    // 4. Record the event in the same transaction.
                     db.ProcessedMessages.Add(new ProcessedMessage
                     {
                         MessageId = messageId,
@@ -115,13 +149,10 @@ public class StockReservedConsumer : BackgroundService
 
                     await db.SaveChangesAsync(stoppingToken);
 
+                    // 5. Commit database changes before Kafka offset.
                     await transaction.CommitAsync(stoppingToken);
 
                     _consumer.Commit(result);
-
-                    _logger.LogInformation(
-                        "Order {OrderId} processed StockReservedEvent.",
-                        order.Id);
                 }
                 catch (OperationCanceledException)
                     when (stoppingToken.IsCancellationRequested)

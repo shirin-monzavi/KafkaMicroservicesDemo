@@ -76,7 +76,16 @@ public class KafkaConsumer : BackgroundService
                     continue;
                 }
 
-                order.Status = OrderStatus.Cancelled;
+                if (order.Status == OrderStatus.Created)
+                {
+                    order.Status = OrderStatus.Cancelled;
+                }
+                else
+                {
+                    Console.WriteLine(
+                        $"Ignoring failure event for order {order.Id} " +
+                        $"because its current status is {order.Status}.");
+                }
 
                 db.ProcessedMessages.Add(
                                         new ProcessedMessage
